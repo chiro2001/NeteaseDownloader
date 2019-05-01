@@ -71,6 +71,7 @@ class Lrc:
 
     @staticmethod
     def parse_lrc(lrc: str):
+        # 看来还是会有错误的写法...
         lines = lrc.split('\n')
         # 删去空行。
         for i in lines:
@@ -79,7 +80,10 @@ class Lrc:
 
         data = Lrc.Data()
         for line in lines:
-            data.lines.append(Lrc.parse_line(line))
+            try:
+                data.lines.append(Lrc.parse_line(line))
+            except ValueError:
+                data.lines.append(Lrc.Line(time=0.0, string=line))
 
         # 排序
         data.sort()

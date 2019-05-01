@@ -6,6 +6,7 @@ from tkinter.filedialog import askdirectory
 from tkinter import messagebox
 import webbrowser
 from base_logger import getLogger
+from lrc_module import Lrc
 
 
 logger = getLogger(__name__)
@@ -65,11 +66,14 @@ class NeteaseDownloader:
             # 需要1个参数:id
             self.url_playlist = self.url_main + 'playlist/%s'
             # 需要n个参数:id
-            self.url_summary = self.url_main + 'summary/%s?common=false&lyric=true&quick=false'
+            self.url_summary = self.url_main + 'summary/%s?common=true&lyric=true&quick=false'
 
         @staticmethod
         def get_json(url: str):
-            response = requests.get(url)
+            try:
+                response = requests.get(url)
+            except requests.exceptions.ConnectionError:
+                raise ConnectionError
             if response.status_code != 200:
                 raise ConnectionError
             # 这里可以抛出异常
@@ -77,17 +81,27 @@ class NeteaseDownloader:
             return js
 
         def search_songs_summary(self, key: str):
-            js = self.get_json(self.url_search_songs % (key, 0, 1))
+            try:
+                js = self.get_json(self.url_search_songs % (key, 0, 1))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return 0
             # 服务器错误
             if js['code'] != 200:
-                raise ConnectionRefusedError
+                messagebox.showerror('错误', '远端服务器拒绝连接...情稍后再试...')
+                return 0
             return int(js['result']['songCount'])
 
         def search_songs(self, key: str, offset: int, limit: int):
-            js = self.get_json(self.url_search_songs % (key, offset, limit))# 服务器错误
+            try:
+                js = self.get_json(self.url_search_songs % (key, offset, limit))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return []
             # 服务器错误
             if js['code'] != 200:
-                raise ConnectionRefusedError
+                messagebox.showerror('错误', '远端服务器拒绝连接...情稍后再试...')
+                return []
             data = js['result']
             songs = []
             if 'songs' not in data:
@@ -97,9 +111,35 @@ class NeteaseDownloader:
             # print(json.dumps(js))
             return songs
 
+        def get_summary(self, ids: list, reverse=False, blend_lrc=True, trans_only=False):
+            res = ''
+            for i in ids:
+                res = res + str(i) + ','
+            res = res[:-1]
+            # print(self.url_summary % (res, ))
+            try:
+                js = self.get_json(self.url_summary % (res,))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return []
+            # 服务器错误
+            if js['code'] != 200:
+                messagebox.showerror('错误', '远端服务器拒绝连接...情稍后再试...')
+                return []
+            summaries = []
+            # print(js)
+            for summary in js['songs']:
+                summaries.append(NeteaseDownloader.SongSummary(summary, reverse=reverse,
+                                                               blend_lrc=blend_lrc, trans_only=trans_only))
+            # print(summaries)
+            return summaries
+
     class Artist:
         def __init__(self, data: dict):
-            self.id = int(data['id'])
+            if 'id' in data:
+                self.id = int(data['id'])
+            else:
+                self.id = None
             self.name = data['name']
 
         def __str__(self):
@@ -113,6 +153,52 @@ class NeteaseDownloader:
             self.artists = []
             for artist in data['artists']:
                 self.artists.append(NeteaseDownloader.Artist(artist))
+
+        def filename(self):
+            artists = ''
+            for artist in self.artists:
+                artists = artists + artist.name + self.split_artist_char
+            artists = artists[:-len(self.split_artist_char)]
+            filename = '%s - %s.mp3' % (artists, self.name)
+            return safe_filename(filename)
+
+        def __str__(self):
+            artists = ''
+            for artist in self.artists:
+                artists = artists + artist.name + self.split_artist_char
+            artists = artists[:-len(self.split_artist_char)]
+            return '%s - %s' % (artists, self.name)
+
+    class SongSummary:
+        def __init__(self, data: dict, reverse=False, blend_lrc=True, trans_only=False):
+            self.split_artist_char = ' '
+            self.id = data['id']
+            if 'url' in data:
+                self.url = data['url']
+            else:
+                self.url = None
+            self.name = data['name']
+            self.artists = []
+            for artist in data['artists']:
+                self.artists.append(NeteaseDownloader.Artist({'name': artist}))
+            self.lrc_target = []
+            if 'base' in data['lyric'] and data['lyric']['base'] is not None:
+                self.lrc_base = Lrc.parse_lrc(data['lyric']['base'])
+                self.lrc_target.append(self.lrc_base)
+            else:
+                self.lrc_base = None
+            if 'translate' in data['lyric'] and data['lyric']['translate'] is not None:
+                self.lrc_trans = Lrc.parse_lrc(data['lyric']['translate'])
+                self.lrc_target.append(self.lrc_trans)
+            else:
+                self.lrc_trans = None
+            self.lrc_target = list(map(str, self.lrc_target))
+            if blend_lrc:
+                self.lrc = str(Lrc.blend(self.lrc_target, reverse=reverse))
+            elif trans_only:
+                self.lrc = str(self.lrc_trans)
+            else:
+                self.lrc = str(self.lrc_base)
 
         def filename(self):
             artists = ''
@@ -173,7 +259,7 @@ class NeteaseDownloader:
         # 搜索结果显示部分
         self.var_result = StringVar()
         self.listbox_result = Listbox(self.frame_result, listvariable=self.var_result, selectmode=EXTENDED)
-        # self.listbox_result.bind('<Double-Button-1>', )
+        self.listbox_result.bind('<Double-Button-1>', self.click_listbox)
         self.listbox_result.pack(side=TOP, fill=X, expand=1)
         frame_select = Frame(self.frame_result)
         Button(frame_select, text='上一页', command=self.previous_page).grid(row=0, column=0)
@@ -188,10 +274,28 @@ class NeteaseDownloader:
         self.var_download_lrc = BooleanVar()
         self.var_download_translation = BooleanVar()
         self.var_insert_by_line = BooleanVar()
-        Checkbutton(self.frame_options, variable=self.var_download_lrc, text='是否下载lrc歌词').grid(row=1, column=0)
-        Checkbutton(self.frame_options, variable=self.var_download_translation, text='是否下载翻译并嵌入lrc').grid(row=1, column=1)
-        Checkbutton(self.frame_options, variable=self.var_insert_by_line, text='按行嵌入(MP3播放器使用)')\
-            .grid(row=2, column=0, columnspan=2)
+        self.var_download_translation_only = BooleanVar()
+        self.var_lrc_gbk = BooleanVar()
+
+        self.chk_download_lrc = Checkbutton(self.frame_options, variable=self.var_download_lrc, text='是否下载lrc歌词', command=self.update_logic)
+        self.chk_download_translation = Checkbutton(self.frame_options, variable=self.var_download_translation, text='    下载翻译并嵌入lrc', command=self.update_logic)
+        self.chk_insert_by_line = Checkbutton(self.frame_options, variable=self.var_insert_by_line, text='        按行嵌入(MP3播放器使用)', command=self.update_logic)
+        self.chk_download_translation_only = Checkbutton(self.frame_options, variable=self.var_download_translation_only, text='    只下载翻译(若无翻译则下载原文)', command=self.update_logic)
+        self.chk_lrc_gbk = Checkbutton(self.frame_options, variable=self.var_lrc_gbk, text='    保存为GBK格式')
+
+        self.chk_download_lrc.grid(row=0, column=0, sticky=W)
+        self.chk_download_translation.grid(row=1, column=0, sticky=W)
+        self.chk_insert_by_line.grid(row=2, column=0, sticky=W)
+        self.chk_download_translation_only.grid(row=3, column=0, sticky=W)
+        self.chk_lrc_gbk.grid(row=4, column=0, sticky=W)
+
+        self.var_download_lrc.set(True)
+        self.var_download_translation_only.set(False)
+        self.var_download_translation.set(True)
+        self.var_insert_by_line.set(False)
+        self.var_lrc_gbk.set(True)
+
+        self.update_logic()
 
         # 操作部分
         self.var_select_all = StringVar()
@@ -224,6 +328,7 @@ class NeteaseDownloader:
         self.root.config(menu=menubar)
 
         self.var_search.set('茶太')
+        self.songs = []
 
     def init_values(self):
         self.offset = 0
@@ -247,6 +352,32 @@ class NeteaseDownloader:
         self.settings.save()
         messagebox.showinfo('成功', '下载文件夹成功设置为%s' % path)
 
+    # 更新选项逻辑
+    def update_logic(self):
+        if self.var_download_lrc.get() is False:
+            self.var_download_translation.set(False)
+            self.var_download_translation_only.set(False)
+            self.var_insert_by_line.set(False)
+            self.var_lrc_gbk.set(False)
+            self.chk_download_translation.configure(state='disabled')
+            self.chk_download_translation_only.configure(state='disabled')
+            self.chk_insert_by_line.configure(state='disabled')
+            self.chk_lrc_gbk.configure(state='disabled')
+        else:
+            self.chk_download_translation.configure(state='normal')
+            self.chk_download_translation_only.configure(state='normal')
+            self.chk_insert_by_line.configure(state='normal')
+            self.chk_lrc_gbk.configure(state='normal')
+
+        if self.var_download_translation.get() is True:
+            self.var_download_translation_only.set(False)
+        if self.var_download_translation_only.get() is True:
+            self.var_download_translation.set(False)
+
+        if self.var_download_translation.get() is False:
+            self.var_insert_by_line.set(False)
+            self.chk_insert_by_line.configure(state='disabled')
+
     def search_new_songs(self, event=None):
         self.init_values()
         self.search_songs()
@@ -257,6 +388,7 @@ class NeteaseDownloader:
             self.total = self.network.search_songs_summary(self.var_search.get())
         logger.info('search(): ' + str((self.var_search.get(), self.offset, self.limit)))
         songs = self.network.search_songs(self.var_search.get(), self.offset, self.limit)
+        self.songs = songs
         songs_names = list(map(str, songs))
         self.var_result.set(songs_names)
         self.update_values()
@@ -289,7 +421,17 @@ class NeteaseDownloader:
         self.search_songs()
 
     def click_listbox(self, event=None):
-        print(self.listbox_result.curselection())
+        selected = self.listbox_result.curselection()
+        if self.disp_mode == self.DISP_MODE_SONGS:
+            ids = []
+            for s in selected:
+                # print(self.songs[s].id, self.songs[s])
+                ids.append(self.songs[s].id)
+            #     reverse=False, blend_lrc=True, trans_only=False
+            summaries = self.network.get_summary(ids, reverse=False, blend_lrc=self.var_download_translation.get(),
+                                                 trans_only=self.var_download_translation_only.get())
+            for summary in summaries:
+                self.download(summary)
 
     def select_all(self):
         self.listbox_result.selection_set(0, self.limit)
@@ -297,13 +439,41 @@ class NeteaseDownloader:
     def select_none(self):
         self.listbox_result.selection_clear(0, self.limit)
 
-    def download_mp3(self, id: int=0, url: str=''):
-        if id == 0 or url == '':
+    def download_mp3(self, summary):
+        if summary is None:
             return
         # TODO: 在这里下载MP3文件。（使用多线程，这个是子线程。）
+        logger.info('Download ' + str(summary) + ' ' + str(summary.id) + ' ' + summary.filename())
+        filepath = self.settings.download_folder + summary.filename()
+        if os.path.exists(filepath):
+            # 大于2MB则判断文件存在
+            if os.path.getsize(filepath) / 1024 / 1024 > 2:
+                logger.info(str(summary) + ' Exists.')
+                return
+        response = requests.get(summary.url)
+        with open(filepath, 'wb') as f:
+            f.write(response.content)
 
-    def new_download(self):
-        pass
+    def download_lrc(self, summary):
+        if summary is None:
+            return
+        if self.var_download_lrc.get() is False:
+            return
+        filename = summary.filename()
+        filename = filename.split('.mp3')[0] + '.lrc'
+        if self.var_insert_by_line.get() is True:
+            summary.lrc = str(Lrc().blend_lines(str(summary.lrc)))
+        if self.var_lrc_gbk.get() is True:
+            with open(self.settings.download_folder + filename, 'w', encoding='gbk', errors='ignore') as f:
+                f.write(summary.lrc)
+        else:
+            with open(self.settings.download_folder + filename, 'w', encoding='utf-8', errors='ignore') as f:
+                f.write(summary.lrc)
+
+    def download(self, summary):
+        self.download_lrc(summary)
+        self.download_mp3(summary)
+        logger.info(str(summary) + ' Fin.')
 
     def mainloop(self):
         self.root.mainloop()
