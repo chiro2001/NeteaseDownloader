@@ -7,6 +7,9 @@ from tkinter import messagebox
 import webbrowser
 from base_logger import getLogger
 from lrc_module import Lrc
+import threading
+import time
+import psutil
 
 
 logger = getLogger(__name__)
@@ -196,9 +199,17 @@ class NeteaseDownloader:
             if blend_lrc:
                 self.lrc = str(Lrc.blend(self.lrc_target, reverse=reverse))
             elif trans_only:
-                self.lrc = str(self.lrc_trans)
+                if self.lrc_trans is not None:
+                    self.lrc = str(self.lrc_trans)
+                else:
+                    self.lrc = str(self.lrc_base)
             else:
-                self.lrc = str(self.lrc_base)
+                if self.lrc is not None:
+                    self.lrc = str(self.lrc_base)
+                else:
+                    self.lrc = '''[00:00.000] 纯音乐，敬请聆听。'''
+
+            self.retry = 0
 
         def filename(self):
             artists = ''
@@ -231,17 +242,22 @@ class NeteaseDownloader:
         if root is None:
             root = Tk()
         self.root = root
-        self.root.title("网易云音乐下载器")
+        self.title = "网易云音乐下载器"
+        self.root.title(self.title)
         # 禁止最大化
         self.root.resizable(width=False, height=False)
 
         # TODO: 加上显示字体修改。主要是搜索结果显示。
         # self.font =
 
-        self.frame_search = Frame(self.root)
-        self.frame_result = Frame(self.root)
-        self.frame_options = LabelFrame(self.root, text='设置')
-        self.frame_operate = Frame(self.root)
+        self.frame_left = Frame(self.root)
+        self.frame_right = Frame(self.root)
+
+        self.frame_search = Frame(self.frame_left)
+        self.frame_result = Frame(self.frame_left)
+        self.frame_options = LabelFrame(self.frame_right, text='歌词设置')
+        self.frame_operate = Frame(self.frame_right)
+        self.frame_download = Frame(self.frame_right)
 
         # 搜索框部分
         self.var_search = StringVar()
@@ -267,7 +283,9 @@ class NeteaseDownloader:
         self.var_page.set('第%s页' % str(self.offset // self.limit))
         Label(frame_select, textvariable=self.var_page).grid(row=0, column=1)
         Button(frame_select, text='下一页', command=self.next_page).grid(row=0, column=2)
-        Label(frame_select, text='提示：按住Ctrl/拖动鼠标/按住Shift多选').grid(row=1, columnspan=5)
+        Label(frame_select, text='提示：按住Ctrl/拖动鼠标/按住Shift多选\n双击下载    下载进度→').grid(row=1, columnspan=5)
+        self.var_message = StringVar()
+        Entry(frame_select, textvariable=self.var_message).grid(row=2, columnspan=5, sticky=W+E)
         frame_select.pack(side=BOTTOM)
 
         # 设置部分
@@ -276,24 +294,28 @@ class NeteaseDownloader:
         self.var_insert_by_line = BooleanVar()
         self.var_download_translation_only = BooleanVar()
         self.var_lrc_gbk = BooleanVar()
+        self.var_lrc_reverse = BooleanVar()
 
-        self.chk_download_lrc = Checkbutton(self.frame_options, variable=self.var_download_lrc, text='是否下载lrc歌词', command=self.update_logic)
+        self.chk_download_lrc = Checkbutton(self.frame_options, variable=self.var_download_lrc, text='下载lrc歌词', command=self.update_logic)
         self.chk_download_translation = Checkbutton(self.frame_options, variable=self.var_download_translation, text='    下载翻译并嵌入lrc', command=self.update_logic)
         self.chk_insert_by_line = Checkbutton(self.frame_options, variable=self.var_insert_by_line, text='        按行嵌入(MP3播放器使用)', command=self.update_logic)
         self.chk_download_translation_only = Checkbutton(self.frame_options, variable=self.var_download_translation_only, text='    只下载翻译(若无翻译则下载原文)', command=self.update_logic)
         self.chk_lrc_gbk = Checkbutton(self.frame_options, variable=self.var_lrc_gbk, text='    保存为GBK格式')
+        self.chk_lrc_reverse = Checkbutton(self.frame_options, variable=self.var_lrc_reverse, text='    中文在原文前')
 
         self.chk_download_lrc.grid(row=0, column=0, sticky=W)
         self.chk_download_translation.grid(row=1, column=0, sticky=W)
         self.chk_insert_by_line.grid(row=2, column=0, sticky=W)
         self.chk_download_translation_only.grid(row=3, column=0, sticky=W)
         self.chk_lrc_gbk.grid(row=4, column=0, sticky=W)
+        self.chk_lrc_reverse.grid(row=5, column=0, sticky=W)
 
         self.var_download_lrc.set(True)
         self.var_download_translation_only.set(False)
         self.var_download_translation.set(True)
         self.var_insert_by_line.set(False)
         self.var_lrc_gbk.set(True)
+        self.var_lrc_reverse.set(True)
 
         self.update_logic()
 
@@ -303,10 +325,19 @@ class NeteaseDownloader:
         Button(self.frame_operate, textvariable=self.var_select_all, command=self.select_all).pack(side=LEFT)
         Button(self.frame_operate, text='下载选中歌曲', command=self.click_listbox).pack(side=RIGHT, fill=X, expand=YES)
 
+        # 下载管理部分
+        self.var_download = StringVar()
+        self.listbox_download = Listbox(self.frame_download, listvariable=self.var_download, height=5)
+        self.listbox_download.pack(fill=X)
+
         self.frame_search.grid(row=1, sticky=W+E)
         self.frame_result.grid(row=2, sticky=W+E)
         self.frame_options.grid(row=3, sticky=W+E)
         self.frame_operate.grid(row=4, sticky=W+E)
+        self.frame_download.grid(row=5, sticky=W+E)
+
+        self.frame_left.pack(side=LEFT)
+        self.frame_right.pack(side=RIGHT)
 
         # 生成菜单
         '''<菜单> 文件       工具        关于    退出
@@ -329,6 +360,18 @@ class NeteaseDownloader:
 
         self.var_search.set('茶太')
         self.songs = []
+        self.max_threads = 10
+        self.max_retry = 3
+        # self.threads = []
+        self.download_queue = []
+        self.downloading = []
+        self.thread_manager = None
+        self.lock = threading.Lock()
+
+        self.last_data = 0
+        self.net_refresh_time = 0.5
+
+        self.update_net_speed()
 
     def init_values(self):
         self.offset = 0
@@ -351,6 +394,20 @@ class NeteaseDownloader:
         self.settings.download_folder = path
         self.settings.save()
         messagebox.showinfo('成功', '下载文件夹成功设置为%s' % path)
+
+    # 更新网速
+    def update_net_speed(self):
+        if self.last_data == 0:
+            self.last_data = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent
+        size = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent - self.last_data
+        kbs = (size / 1024) / self.net_refresh_time
+        unit = 'KB'
+        if kbs > 1024:
+            kbs /= 1024
+            unit = 'MB'
+        self.root.title("%s - %0.2f%s/s" % (self.title, kbs, unit))
+        self.last_data = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent
+        self.root.after(int(self.net_refresh_time * 1000), self.update_net_speed)
 
     # 更新选项逻辑
     def update_logic(self):
@@ -387,6 +444,8 @@ class NeteaseDownloader:
         if self.total == 0:
             self.total = self.network.search_songs_summary(self.var_search.get())
         logger.info('search(): ' + str((self.var_search.get(), self.offset, self.limit)))
+        self.var_message.set('搜索: %s' % self.var_search.get())
+
         songs = self.network.search_songs(self.var_search.get(), self.offset, self.limit)
         self.songs = songs
         songs_names = list(map(str, songs))
@@ -424,14 +483,15 @@ class NeteaseDownloader:
         selected = self.listbox_result.curselection()
         if self.disp_mode == self.DISP_MODE_SONGS:
             ids = []
+            if len(selected) == 0:
+                return
             for s in selected:
                 # print(self.songs[s].id, self.songs[s])
                 ids.append(self.songs[s].id)
-            #     reverse=False, blend_lrc=True, trans_only=False
-            summaries = self.network.get_summary(ids, reverse=False, blend_lrc=self.var_download_translation.get(),
+            summaries = self.network.get_summary(ids, reverse=self.var_lrc_reverse.get(),
+                                                 blend_lrc=self.var_download_translation.get(),
                                                  trans_only=self.var_download_translation_only.get())
-            for summary in summaries:
-                self.download(summary)
+            self.download_manager(summaries)
 
     def select_all(self):
         self.listbox_result.selection_set(0, self.limit)
@@ -439,18 +499,81 @@ class NeteaseDownloader:
     def select_none(self):
         self.listbox_result.selection_clear(0, self.limit)
 
+    def download_manager(self, summaries: list):
+        self.lock.acquire()
+        # for summary in summaries:
+        #     t = threading.Thread(target=self.download, args=(summary, ))
+        #     t.setDaemon(True)
+        #     self.threads.append(t)
+        self.download_queue.extend(summaries)
+        print(self.download_queue)
+        self.lock.release()
+        if self.thread_manager is None:
+            logger.warning('Starting manager...' + ' %s' % len(self.download_queue))
+            self.thread_manager = threading.Thread(target=self.manager)
+            self.thread_manager.setDaemon(True)
+            self.thread_manager.start()
+
+    def manager(self):
+        sleep_time = 0.2
+        logger.warning('Manager started...')
+        while len(self.download_queue) > 0:
+            # logger.info('Manager beats...')
+            res = []
+            for d in self.downloading:
+                if d.retry <= self.max_retry:
+                    res.append(str(d))
+                else:
+                    logger.error('%s超过%s次重试次数，下载失败' % (str(d), self.max_retry))
+                    self.var_message.set('%s超过%s次重试次数，下载失败' % (str(d), self.max_retry))
+            for d in self.download_queue:
+                if d.retry <= self.max_retry:
+                    res.append(str(d))
+                else:
+                    logger.error('%s超过%s次重试次数，下载失败' % (str(d), self.max_retry))
+                    self.var_message.set('%s超过%s次重试次数，下载失败' % (str(d), self.max_retry))
+
+            self.var_download.set(res)
+
+            while len(threading.enumerate()) < self.max_threads:
+                if len(self.download_queue) == 0:
+                    break
+                self.lock.acquire()
+                top = self.download_queue[0]
+                self.download_queue.remove(top)
+                self.downloading.append(top)
+                self.lock.release()
+                t = threading.Thread(target=self.download, args=(top,))
+                t.setDaemon(True)
+                t.start()
+
+            time.sleep(sleep_time)
+
+        self.download_queue = []
+        # self.var_download.set('')
+        self.thread_manager = None
+
     def download_mp3(self, summary):
         if summary is None:
             return
-        # TODO: 在这里下载MP3文件。（使用多线程，这个是子线程。）
+        # 在这里下载MP3文件。（使用多线程，这个是子线程。）
         logger.info('Download ' + str(summary) + ' ' + str(summary.id) + ' ' + summary.filename())
         filepath = self.settings.download_folder + summary.filename()
         if os.path.exists(filepath):
             # 大于2MB则判断文件存在
             if os.path.getsize(filepath) / 1024 / 1024 > 2:
                 logger.info(str(summary) + ' Exists.')
+                self.var_message.set("%s文件已经存在" % (str(summary)))
                 return
-        response = requests.get(summary.url)
+        try:
+            response = requests.get(summary.url)
+        except requests.exceptions.ConnectTimeout:
+            # 超时就重试
+            summary.retry += 1
+            self.lock.acquire()
+            self.download_queue.append(summary)
+            self.lock.release()
+            return
         with open(filepath, 'wb') as f:
             f.write(response.content)
 
@@ -471,9 +594,22 @@ class NeteaseDownloader:
                 f.write(summary.lrc)
 
     def download(self, summary):
+        logger.info("Start download: " + str(summary))
+        self.var_message.set('开始下载 %s' % (str(summary), ))
         self.download_lrc(summary)
         self.download_mp3(summary)
         logger.info(str(summary) + ' Fin.')
+        self.var_message.set('下载完成 %s' % (str(summary), ))
+
+        self.lock.acquire()
+        for d in self.downloading:
+            if d.name == summary.name:
+                self.downloading.remove(d)
+                break
+        self.lock.release()
+
+        if len(self.downloading) == 0 and len(self.download_queue) == 0:
+            self.var_download.set(["下载全部完成", ])
 
     def mainloop(self):
         self.root.mainloop()
@@ -482,8 +618,4 @@ class NeteaseDownloader:
 if __name__ == '__main__':
     downloader = NeteaseDownloader(root=Tk())
     downloader.mainloop()
-    # _net = NeteaseDownloader.Network()
-    # songs = _net.search_songs('ACG', 6, 30)
-    # for song in songs:
-    #     print('search:', song)
 
