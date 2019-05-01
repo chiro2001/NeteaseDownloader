@@ -137,6 +137,50 @@ class NeteaseDownloader:
             # print(summaries)
             return summaries
 
+        def get_playlist_summary(self, id: int):
+            try:
+                js = self.get_json(self.url_playlist % (id,))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return []
+            # 服务器错误
+            if js['code'] != 200:
+                messagebox.showerror('错误', '远端服务器拒绝连接...情稍后再试...')
+                return []
+            playlist_summary = NeteaseDownloader.PlaylistSummary(js['playlist'])
+            return playlist_summary
+
+        def search_playlists_summary(self, key: str):
+            try:
+                js = self.get_json(self.url_search_playlists % (key, 0, 1))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return 0
+            # 服务器错误
+            if js['code'] != 200:
+                messagebox.showerror('错误', '远端服务器拒绝连接...请稍后再试...')
+                return 0
+            return int(js['result']['playlistCount'])
+
+        def search_playlists(self, key: str, offset: int, limit: int):
+            try:
+                js = self.get_json(self.url_search_playlists % (key, offset, limit))
+            except ConnectionError:
+                messagebox.showerror('错误', '连接错误! 检查网络...')
+                return []
+            # 服务器错误
+            if js['code'] != 200:
+                messagebox.showerror('错误', '远端服务器拒绝连接...请稍后再试...')
+                return []
+            data = js['result']
+            playlists = []
+            if 'playlists' not in data:
+                return playlists
+            for playlist in data['playlists']:
+                playlists.append(NeteaseDownloader.Playlist(playlist))
+            # print(json.dumps(js))
+            return playlists
+
     class Artist:
         def __init__(self, data: dict):
             if 'id' in data:
@@ -149,6 +193,11 @@ class NeteaseDownloader:
             return self.name
 
     class Song:
+        @staticmethod
+        def from_playlist(data: dict):
+            data['artists'] = data['ar']
+            return NeteaseDownloader.Song(data)
+
         def __init__(self, data: dict):
             self.split_artist_char = ' '
             self.id = int(data['id'])
@@ -226,6 +275,44 @@ class NeteaseDownloader:
             artists = artists[:-len(self.split_artist_char)]
             return '%s - %s' % (artists, self.name)
 
+    class Creator(Artist):
+        pass
+
+    class Playlist:
+        def __init__(self, data: dict):
+            self.id = int(data['id'])
+            self.name = data['name']
+            self.img_url = data['coverImgUrl']
+            self.creator = NeteaseDownloader.Creator({'id': data['creator']['userId'],
+                                                      'name': data['creator']['nickname']})
+            self.count_track = data['trackCount']
+            self.count_play = data['playCount']
+            # self.count_book = data['bookCount']
+            self.description = data['description']
+
+        def __str__(self):
+            return "%s - %s" % (self.name, str(self.creator))
+
+    class PlaylistSummary:
+        def __init__(self, data: dict):
+            self.id = int(data['id'])
+            self.name = data['name']
+            self.creator = NeteaseDownloader.Creator({'id': data['creator']['userId'],
+                                                      'name': data['creator']['nickname']})
+            self.songs = []
+            for track in data['tracks']:
+                song = NeteaseDownloader.Song.from_playlist(track)
+                self.songs.append(song)
+
+            self.img_url = data['coverImgUrl']
+            self.count_track = data['trackCount']
+            self.count_play = data['playCount']
+            # self.count_book = data['bookCount']
+            self.description = data['description']
+
+        def __str__(self):
+            return '%s - %s' % (self.name, str(self.creator))
+
     def __init__(self, root=None):
         self.version = 'v0.01'
 
@@ -296,10 +383,15 @@ class NeteaseDownloader:
         self.var_lrc_gbk = BooleanVar()
         self.var_lrc_reverse = BooleanVar()
 
-        self.chk_download_lrc = Checkbutton(self.frame_options, variable=self.var_download_lrc, text='下载lrc歌词', command=self.update_logic)
-        self.chk_download_translation = Checkbutton(self.frame_options, variable=self.var_download_translation, text='    下载翻译并嵌入lrc', command=self.update_logic)
-        self.chk_insert_by_line = Checkbutton(self.frame_options, variable=self.var_insert_by_line, text='        按行嵌入(MP3播放器使用)', command=self.update_logic)
-        self.chk_download_translation_only = Checkbutton(self.frame_options, variable=self.var_download_translation_only, text='    只下载翻译(若无翻译则下载原文)', command=self.update_logic)
+        self.chk_download_lrc = Checkbutton(self.frame_options, variable=self.var_download_lrc, text='下载lrc歌词',
+                                            command=self.update_logic)
+        self.chk_download_translation = Checkbutton(self.frame_options, variable=self.var_download_translation,
+                                                    text='    下载翻译并嵌入lrc', command=self.update_logic)
+        self.chk_insert_by_line = Checkbutton(self.frame_options, variable=self.var_insert_by_line,
+                                              text='        按行嵌入(MP3播放器使用)', command=self.update_logic)
+        self.chk_download_translation_only = Checkbutton(self.frame_options,
+                                                         variable=self.var_download_translation_only,
+                                                         text='    只下载翻译(若无翻译则下载原文)', command=self.update_logic)
         self.chk_lrc_gbk = Checkbutton(self.frame_options, variable=self.var_lrc_gbk, text='    保存为GBK格式')
         self.chk_lrc_reverse = Checkbutton(self.frame_options, variable=self.var_lrc_reverse, text='    中文在原文前')
 
@@ -360,6 +452,7 @@ class NeteaseDownloader:
 
         self.var_search.set('茶太')
         self.songs = []
+        self.playlists = []
         self.max_threads = 10
         self.max_retry = 3
         # self.threads = []
@@ -443,7 +536,7 @@ class NeteaseDownloader:
         self.disp_mode = self.DISP_MODE_SONGS
         if self.total == 0:
             self.total = self.network.search_songs_summary(self.var_search.get())
-        logger.info('search(): ' + str((self.var_search.get(), self.offset, self.limit)))
+        logger.info('search_songs(): ' + str((self.var_search.get(), self.offset, self.limit)))
         self.var_message.set('搜索: %s' % self.var_search.get())
 
         songs = self.network.search_songs(self.var_search.get(), self.offset, self.limit)
@@ -453,9 +546,22 @@ class NeteaseDownloader:
         self.update_values()
         self.select_none()
 
+    def search_new_playlists(self, event=None):
+        self.init_values()
+        self.search_playlists()
+
     def search_playlists(self):
-        print('search playlists:', self.var_search.get())
         self.disp_mode = self.DISP_MODE_PLAYLISTS
+        if self.total == 0:
+            self.total = self.network.search_playlists_summary(self.var_search.get())
+        self.var_message.set('搜索歌单: %s' % self.var_search.get())
+        logger.info('search_playlists(): ' + str((self.var_search.get(), self.offset, self.limit)))
+        playlists = self.network.search_playlists(self.var_search.get(), self.offset, self.limit)
+        self.playlists = playlists
+        playlists_names = list(map(str, playlists))
+        self.var_result.set(playlists_names)
+        self.update_values()
+        self.select_none()
 
     def previous_page(self):
         if len(self.var_search.get()) == 0:
@@ -492,6 +598,14 @@ class NeteaseDownloader:
                                                  blend_lrc=self.var_download_translation.get(),
                                                  trans_only=self.var_download_translation_only.get())
             self.download_manager(summaries)
+
+        if self.disp_mode == self.DISP_MODE_PLAYLISTS:
+            # 只接受一个歌单
+            if len(selected) != 1:
+                return
+            pid = self.playlists[selected[0]].id
+            playlist_summary = self.network.get_playlist_summary(pid)
+            print(str(playlist_summary))
 
     def select_all(self):
         self.listbox_result.selection_set(0, self.limit)
