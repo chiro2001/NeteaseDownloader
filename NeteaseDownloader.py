@@ -357,6 +357,7 @@ class NeteaseDownloader:
         # 辨认一下是显示的啥子内容
         self.DISP_MODE_SONGS = 'SONGS'
         self.DISP_MODE_PLAYLISTS = 'PLAYLISTS'
+        self.DISP_MODE_PLAYLISTS_SONGS = 'PLAYLISTS_SONGS'
         self.disp_mode = self.DISP_MODE_SONGS
 
         # 搜索结果显示部分
@@ -472,7 +473,11 @@ class NeteaseDownloader:
         self.update_values()
 
     def update_values(self):
-        self.var_page.set('第%s/%s页' % (str(self.offset // self.limit + 1), str(self.total // self.limit + 1)))
+        if self.disp_mode == self.DISP_MODE_SONGS or self.disp_mode == self.DISP_MODE_PLAYLISTS:
+            string = '第%s/%s页' % (str(self.offset // self.limit + 1), str(self.total // self.limit + 1))
+        else:
+            string = '第1/1页'
+        self.var_page.set(string)
 
     def menu_about(self):
         webbrowser.open('https://github.com/LanceLiang2018/NeteaseDownloader')
@@ -558,41 +563,66 @@ class NeteaseDownloader:
         logger.info('search_playlists(): ' + str((self.var_search.get(), self.offset, self.limit)))
         playlists = self.network.search_playlists(self.var_search.get(), self.offset, self.limit)
         self.playlists = playlists
-        playlists_names = list(map(str, playlists))
+        playlists_names = list(map(lambda x: "[%s] %s" % (x.count_track, str(x)), playlists))
         self.var_result.set(playlists_names)
         self.update_values()
         self.select_none()
 
     def previous_page(self):
-        if len(self.var_search.get()) == 0:
+        if self.disp_mode == self.DISP_MODE_SONGS:
+            if len(self.var_search.get()) == 0:
+                return
+            if self.total == 0:
+                self.total = self.network.search_songs_summary(self.var_search.get())
+            self.offset -= self.limit
+            if self.offset < 0:
+                self.offset = 0
+                return
+            self.search_songs()
+        if self.disp_mode == self.DISP_MODE_PLAYLISTS_SONGS:
             return
-        if self.total == 0:
-            self.total = self.network.search_songs_summary(self.var_search.get())
-        self.offset -= self.limit
-        if self.offset < 0:
-            self.offset = 0
-            return
-        self.search_songs()
+        if self.disp_mode == self.DISP_MODE_PLAYLISTS:
+            if len(self.var_search.get()) == 0:
+                return
+            if self.total == 0:
+                self.total = self.network.search_playlists_summary(self.var_search.get())
+            self.offset -= self.limit
+            if self.offset < 0:
+                self.offset = 0
+                return
+            self.search_playlists()
 
     def next_page(self):
-        if len(self.var_search.get()) == 0:
+        if self.disp_mode == self.DISP_MODE_SONGS:
+            if len(self.var_search.get()) == 0:
+                return
+            if self.total == 0:
+                self.total = self.network.search_songs_summary(self.var_search.get())
+            self.offset += self.limit
+            if self.offset > self.total:
+                self.offset = self.total
+                return
+            self.search_songs()
+        if self.disp_mode == self.DISP_MODE_PLAYLISTS_SONGS:
             return
-        if self.total == 0:
-            self.total = self.network.search_songs_summary(self.var_search.get())
-        self.offset += self.limit
-        if self.offset > self.total:
-            self.offset = self.total
-            return
-        self.search_songs()
+        if self.disp_mode == self.DISP_MODE_PLAYLISTS:
+            if len(self.var_search.get()) == 0:
+                return
+            if self.total == 0:
+                self.total = self.network.search_playlists_summary(self.var_search.get())
+            self.offset += self.limit
+            if self.offset > self.total:
+                self.offset = self.total
+                return
+            self.search_playlists()
 
     def click_listbox(self, event=None):
         selected = self.listbox_result.curselection()
-        if self.disp_mode == self.DISP_MODE_SONGS:
+        if self.disp_mode == self.DISP_MODE_SONGS or self.disp_mode == self.DISP_MODE_PLAYLISTS_SONGS:
             ids = []
             if len(selected) == 0:
                 return
             for s in selected:
-                # print(self.songs[s].id, self.songs[s])
                 ids.append(self.songs[s].id)
             summaries = self.network.get_summary(ids, reverse=self.var_lrc_reverse.get(),
                                                  blend_lrc=self.var_download_translation.get(),
@@ -605,7 +635,15 @@ class NeteaseDownloader:
                 return
             pid = self.playlists[selected[0]].id
             playlist_summary = self.network.get_playlist_summary(pid)
-            print(str(playlist_summary))
+            # print(str(playlist_summary))
+
+            # 切换到显示歌单内容
+            self.disp_mode = self.DISP_MODE_PLAYLISTS_SONGS
+            self.songs = playlist_summary.songs
+            songs_names = list(map(str, playlist_summary.songs))
+            self.var_result.set(songs_names)
+            self.update_values()
+            self.select_none()
 
     def select_all(self):
         self.listbox_result.selection_set(0, self.limit)
@@ -620,17 +658,17 @@ class NeteaseDownloader:
         #     t.setDaemon(True)
         #     self.threads.append(t)
         self.download_queue.extend(summaries)
-        print(self.download_queue)
+        # print(self.download_queue)
         self.lock.release()
         if self.thread_manager is None:
-            logger.warning('Starting manager...' + ' %s' % len(self.download_queue))
+            # logger.warning('Starting manager...' + ' %s' % len(self.download_queue))
             self.thread_manager = threading.Thread(target=self.manager)
             self.thread_manager.setDaemon(True)
             self.thread_manager.start()
 
     def manager(self):
         sleep_time = 0.2
-        logger.warning('Manager started...')
+        # logger.warning('Manager started...')
         while len(self.download_queue) > 0:
             # logger.info('Manager beats...')
             res = []
@@ -688,6 +726,8 @@ class NeteaseDownloader:
             self.download_queue.append(summary)
             self.lock.release()
             return
+        if not os.path.exists(self.settings.download_folder):
+            os.mkdir(self.settings.download_folder)
         with open(filepath, 'wb') as f:
             f.write(response.content)
 
@@ -700,6 +740,8 @@ class NeteaseDownloader:
         filename = filename.split('.mp3')[0] + '.lrc'
         if self.var_insert_by_line.get() is True:
             summary.lrc = str(Lrc().blend_lines(str(summary.lrc)))
+        if not os.path.exists(self.settings.download_folder):
+            os.mkdir(self.settings.download_folder)
         if self.var_lrc_gbk.get() is True:
             with open(self.settings.download_folder + filename, 'w', encoding='gbk', errors='ignore') as f:
                 f.write(summary.lrc)
