@@ -12,9 +12,10 @@ import time
 import psutil
 from urllib import parse
 import multiprocessing
+import platform
 
 
-from NeateaseLyricDownloader import NeteaseLyricDownloader
+from NeteaseLyricDownloader import NeteaseLyricDownloader
 
 
 logger = getLogger(__name__)
@@ -140,7 +141,7 @@ class NeteaseDownloader:
             for i in ids:
                 res = res + str(i) + ','
             res = res[:-1]
-            # print(self.url_summary % (res, ))
+            print(self.url_summary % (res, ))
             try:
                 js = self.get_json(self.url_summary % (res,))
             except ConnectionError:
@@ -500,8 +501,9 @@ class NeteaseDownloader:
     def setup(self):
         top = Toplevel(self.root)
         self.top = top
-        top.attributes("-toolwindow", 1)
-        top.attributes("-topmost", 1)
+        if platform.system() == 'Windows':
+            top.attributes("-toolwindow", 1)
+            top.attributes("-topmost", 1)
         top.resizable(width=False, height=False)
         top.title("设置")
         # top.overrideredirect(True)
@@ -555,8 +557,20 @@ class NeteaseDownloader:
         webbrowser.open('https://github.com/LanceLiang2018/NeteaseDownloader')
 
     def menu_tools_lyric(self):
-        p = multiprocessing.Process(target=start_lyric_downloader, args=(self.settings.download_folder, ))
-        p.start()
+        if platform.system() == 'Windows':
+            p = multiprocessing.Process(target=start_lyric_downloader, args=(self.settings.download_folder, ))
+            p.start()
+        elif platform.system() == 'Linux':
+            # t = threading.Thread(target=start_lyric_downloader, args=(self.settings.download_folder, ))
+            # t.start()
+            if not os.path.exists('NeteaseLyricDownloader'):
+                messagebox.showerror('错误', '找不到NeteaseLyricDownloader文件。请下载相关文件。')
+                return
+            code = os.system('./NeteaseLyricDownloader &')
+            # code = os.system('python3 NeteaseLyricDownloader.py &')
+            if code != 0:
+                messagebox.showerror('错误', '运行程序失败。错误码 %s' % code)
+            return
 
     def menu_set_download_folder(self):
         path = askdirectory()
@@ -848,12 +862,13 @@ class NeteaseDownloader:
 
 
 def start_lyric_downloader(working_dir: str):
-    lyric = NeteaseLyricDownloader(Tk(), default_dir=working_dir)
+    # lyric = NeteaseLyricDownloader(root=Tk(), default_dir=working_dir)
+    lyric = NeteaseLyricDownloader(root=None, default_dir=working_dir)
     lyric.mainloop()
 
 
 if __name__ == '__main__':
-    multiprocessing.freeze_support()
+    # multiprocessing.freeze_support()
     _downloader = NeteaseDownloader(root=Tk())
     _downloader.mainloop()
 
