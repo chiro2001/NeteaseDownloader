@@ -10,6 +10,7 @@ import time
 import requests
 import json
 from urllib import parse
+# import multiprocessing
 
 
 logger = getLogger(__name__)
@@ -291,7 +292,7 @@ class NeteaseLyricDownloader:
         def __str__(self):
             return '%s - %s' % (self.name, str(self.creator))
 
-    def __init__(self, root, default_dir: str=''):
+    def __init__(self, root, default_dir: str='.'):
         self.root = root
         self.title = "歌词适配"
         self.root.title(self.title)
@@ -627,5 +628,6 @@ class NeteaseLyricDownloader:
 
 
 if __name__ == '__main__':
+    # multiprocessing.freeze_support()
     _lyric = NeteaseLyricDownloader(Tk())
     _lyric.mainloop()

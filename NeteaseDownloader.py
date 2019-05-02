@@ -853,6 +853,7 @@ def start_lyric_downloader(working_dir: str):
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     _downloader = NeteaseDownloader(root=Tk())
     _downloader.mainloop()
 
