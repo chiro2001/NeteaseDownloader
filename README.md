@@ -44,11 +44,11 @@
 
 ### 下载工具
 
-![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/first.jpg)
+![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/first.png)
 
-![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/downloading.jpg)
+![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/downloading.png)
 
-![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/done.jpg)
+![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/done.png)
 
  - 搜索单曲后选择曲目下载
  - 搜索歌单后选择曲目下载
@@ -59,7 +59,7 @@
  
 ### 歌词匹配工具
  
-![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/lyric.jpg)
+![图片](https://github.com/LanceLiang2018/NeteaseDownloader/raw/master/images/lyric.png)
  
  - 选择文件夹，自动列出文件夹下的MP3文件
  - 选择歌词选项
