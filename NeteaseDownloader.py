@@ -10,6 +10,11 @@ from lrc_module import Lrc
 import threading
 import time
 import psutil
+from urllib import parse
+import multiprocessing
+
+
+from NeateaseLyricDownloader import NeteaseLyricDownloader
 
 
 logger = getLogger(__name__)
@@ -34,8 +39,11 @@ def safe_filename(filename: str):
 class NeteaseDownloader:
     class Settings:
         def __init__(self):
-            self.download_folder = 'Download/'
+            self.download_folder = 'Download'
             self.save_filename = 'settings.json'
+            self.max_threads = 10
+            self.max_retry = 3
+            self.refresh_time = 0.5
             self.load()
 
         def load(self):
@@ -44,24 +52,33 @@ class NeteaseDownloader:
             with open(self.save_filename, 'r') as f:
                 js = json.loads(f.read())
                 self.download_folder = js['download_folder']
+                self.max_threads = js['max_threads']
+                self.max_retry = js['max_retry']
+                self.refresh_time = js['refresh_time']
 
         def save(self):
             with open(self.save_filename, 'w') as f:
                 js = json.dumps({
-                    'download_folder': self.download_folder
+                    'download_folder': self.download_folder,
+                    'max_threads': self.max_threads,
+                    'max_retry': self.max_retry,
+                    'refresh_time': self.refresh_time
                 })
                 f.write(js)
 
         def new(self):
             with open(self.save_filename, 'w') as f:
                 js = json.dumps({
-                    'download_folder': 'Download/'
+                    'download_folder': 'Download',
+                    'max_threads': 10,
+                    'max_retry': 3,
+                    'refresh_time': 0.5
                 })
                 f.write(js)
 
     class Network:
         def __init__(self):
-            self.url_main = 'https://v1.hitokoto.cn/nm/'
+            self.url_main = 'https://international.v1.hitokoto.cn/nm/'
             # 需要3个参数:key, offset, limit
             self.url_search_songs = self.url_main + 'search/%s?type=SONG&offset=%s&limit=%s'
             # 需要3个参数:key, offset, limit
@@ -84,6 +101,7 @@ class NeteaseDownloader:
             return js
 
         def search_songs_summary(self, key: str):
+            key = parse.quote(key.encode('utf8'))
             try:
                 js = self.get_json(self.url_search_songs % (key, 0, 1))
             except ConnectionError:
@@ -96,6 +114,7 @@ class NeteaseDownloader:
             return int(js['result']['songCount'])
 
         def search_songs(self, key: str, offset: int, limit: int):
+            key = parse.quote(key.encode('utf8'))
             try:
                 js = self.get_json(self.url_search_songs % (key, offset, limit))
             except ConnectionError:
@@ -115,6 +134,8 @@ class NeteaseDownloader:
             return songs
 
         def get_summary(self, ids: list, reverse=False, blend_lrc=True, trans_only=False):
+            if len(ids) == 0:
+                return []
             res = ''
             for i in ids:
                 res = res + str(i) + ','
@@ -137,9 +158,9 @@ class NeteaseDownloader:
             # print(summaries)
             return summaries
 
-        def get_playlist_summary(self, id: int):
+        def get_playlist_summary(self, pid: int):
             try:
-                js = self.get_json(self.url_playlist % (id,))
+                js = self.get_json(self.url_playlist % (pid,))
             except ConnectionError:
                 messagebox.showerror('错误', '连接错误! 检查网络...')
                 return []
@@ -151,6 +172,7 @@ class NeteaseDownloader:
             return playlist_summary
 
         def search_playlists_summary(self, key: str):
+            key = parse.quote(key.encode('utf8'))
             try:
                 js = self.get_json(self.url_search_playlists % (key, 0, 1))
             except ConnectionError:
@@ -163,6 +185,7 @@ class NeteaseDownloader:
             return int(js['result']['playlistCount'])
 
         def search_playlists(self, key: str, offset: int, limit: int):
+            key = parse.quote(key.encode('utf8'))
             try:
                 js = self.get_json(self.url_search_playlists % (key, offset, limit))
             except ConnectionError:
@@ -408,7 +431,7 @@ class NeteaseDownloader:
         self.var_download_translation.set(True)
         self.var_insert_by_line.set(False)
         self.var_lrc_gbk.set(True)
-        self.var_lrc_reverse.set(True)
+        self.var_lrc_reverse.set(False)
 
         self.update_logic()
 
@@ -433,8 +456,8 @@ class NeteaseDownloader:
         self.frame_right.pack(side=RIGHT)
 
         # 生成菜单
-        '''<菜单> 文件       工具        关于    退出
-            设置下载目录 歌词下载工具    关于我
+        '''<菜单> 文件     设置      工具        关于    退出
+            设置下载目录          歌词下载工具    关于我
         '''
         menubar = Menu(self.root)
         menu_file = Menu(menubar, tearoff=0)
@@ -445,6 +468,7 @@ class NeteaseDownloader:
         menu_about.add_command(label='关于我', command=self.menu_about)
 
         menubar.add_cascade(label='文件', menu=menu_file)
+        menubar.add_command(label='设置', command=self.setup)
         menubar.add_cascade(label='工具', menu=menu_tools)
         menubar.add_cascade(label='关于', menu=menu_about)
         menubar.add_command(label='退出', command=self.root.quit)
@@ -454,8 +478,8 @@ class NeteaseDownloader:
         self.var_search.set('茶太')
         self.songs = []
         self.playlists = []
-        self.max_threads = 10
-        self.max_retry = 3
+        self.max_threads = self.settings.max_threads
+        self.max_retry = self.settings.max_retry
         # self.threads = []
         self.download_queue = []
         self.downloading = []
@@ -463,9 +487,57 @@ class NeteaseDownloader:
         self.lock = threading.Lock()
 
         self.last_data = 0
-        self.net_refresh_time = 0.5
+        self.net_refresh_time = self.settings.refresh_time
 
         self.update_net_speed()
+
+        self.setup_var_max_threads = StringVar()
+        self.setup_var_max_retry = StringVar()
+        self.setup_var_refresh_time = StringVar()
+
+        self.top = None
+
+    def setup(self):
+        top = Toplevel(self.root)
+        self.top = top
+        top.attributes("-toolwindow", 1)
+        top.attributes("-topmost", 1)
+        top.resizable(width=False, height=False)
+        top.title("设置")
+        # top.overrideredirect(True)
+        # self.root.iconify()
+
+        frame = Frame(top)
+
+        self.setup_var_max_threads.set(str(self.max_threads))
+        self.setup_var_max_retry.set(str(self.max_retry))
+        self.setup_var_refresh_time.set(str(self.net_refresh_time))
+
+        Label(frame, text='下载线程数').grid(row=1, column=1)
+        Entry(frame, textvariable=self.setup_var_max_threads).grid(row=1, column=2)
+        Label(frame, text='重试次数').grid(row=2, column=1)
+        Entry(frame, textvariable=self.setup_var_max_retry).grid(row=2, column=2)
+        Label(frame, text='网速刷新时间').grid(row=3, column=1)
+        Entry(frame, textvariable=self.setup_var_refresh_time).grid(row=3, column=2)
+
+        frame.pack(side=TOP)
+        Button(top, text='保存设置', command=self.setup_confirm).pack(side=BOTTOM, fill=X, expand=1)
+
+        top.mainloop()
+
+    def setup_confirm(self):
+        try:
+            self.max_threads = int(self.setup_var_max_threads.get())
+            self.max_retry = int(self.setup_var_max_retry.get())
+            self.net_refresh_time = float(self.setup_var_refresh_time.get())
+        except ValueError:
+            messagebox.showerror('错误', '参数设置错误!')
+            self.top.destroy()
+        self.settings.max_threads = self.max_threads
+        self.settings.max_retry = self.max_retry
+        self.settings.refresh_time = self.net_refresh_time
+        self.settings.save()
+        self.top.destroy()
 
     def init_values(self):
         self.offset = 0
@@ -483,7 +555,8 @@ class NeteaseDownloader:
         webbrowser.open('https://github.com/LanceLiang2018/NeteaseDownloader')
 
     def menu_tools_lyric(self):
-        messagebox.showinfo('...', '还没做...')
+        p = multiprocessing.Process(target=start_lyric_downloader, args=(self.settings.download_folder, ))
+        p.start()
 
     def menu_set_download_folder(self):
         path = askdirectory()
@@ -496,15 +569,18 @@ class NeteaseDownloader:
     # 更新网速
     def update_net_speed(self):
         if self.last_data == 0:
-            self.last_data = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent
-        size = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent - self.last_data
+            self.last_data = psutil.net_io_counters(pernic=False).bytes_recv + \
+                             psutil.net_io_counters(pernic=False).bytes_sent
+        size = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent
+        size -= self.last_data
         kbs = (size / 1024) / self.net_refresh_time
         unit = 'KB'
         if kbs > 1024:
             kbs /= 1024
             unit = 'MB'
-        self.root.title("%s - %0.2f%s/s" % (self.title, kbs, unit))
-        self.last_data = psutil.net_io_counters(pernic=False).bytes_recv + psutil.net_io_counters(pernic=False).bytes_sent
+        self.root.title("%s - %s进程 - %0.2f%s/s" % (self.title, len(threading.enumerate()), kbs, unit))
+        self.last_data = psutil.net_io_counters(pernic=False).bytes_recv
+        self.last_data += psutil.net_io_counters(pernic=False).bytes_sent
         self.root.after(int(self.net_refresh_time * 1000), self.update_net_speed)
 
     # 更新选项逻辑
@@ -710,7 +786,7 @@ class NeteaseDownloader:
             return
         # 在这里下载MP3文件。（使用多线程，这个是子线程。）
         logger.info('Download ' + str(summary) + ' ' + str(summary.id) + ' ' + summary.filename())
-        filepath = self.settings.download_folder + summary.filename()
+        filepath = self.settings.download_folder + '/' + summary.filename()
         if os.path.exists(filepath):
             # 大于2MB则判断文件存在
             if os.path.getsize(filepath) / 1024 / 1024 > 2:
@@ -743,10 +819,10 @@ class NeteaseDownloader:
         if not os.path.exists(self.settings.download_folder):
             os.mkdir(self.settings.download_folder)
         if self.var_lrc_gbk.get() is True:
-            with open(self.settings.download_folder + filename, 'w', encoding='gbk', errors='ignore') as f:
+            with open(self.settings.download_folder + '/' + filename, 'w', encoding='gbk', errors='ignore') as f:
                 f.write(summary.lrc)
         else:
-            with open(self.settings.download_folder + filename, 'w', encoding='utf-8', errors='ignore') as f:
+            with open(self.settings.download_folder + '/' + filename, 'w', encoding='utf-8', errors='ignore') as f:
                 f.write(summary.lrc)
 
     def download(self, summary):
@@ -771,7 +847,12 @@ class NeteaseDownloader:
         self.root.mainloop()
 
 
+def start_lyric_downloader(working_dir: str):
+    lyric = NeteaseLyricDownloader(Tk(), default_dir=working_dir)
+    lyric.mainloop()
+
+
 if __name__ == '__main__':
-    downloader = NeteaseDownloader(root=Tk())
-    downloader.mainloop()
+    _downloader = NeteaseDownloader(root=Tk())
+    _downloader.mainloop()
 
