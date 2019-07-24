@@ -235,7 +235,8 @@ class NeteaseLyricDownloader:
                 if self.lrc is not None:
                     self.lrc = str(self.lrc_base)
                 else:
-                    self.lrc = '''[00:00.000] 纯音乐，敬请聆听。'''
+                    # self.lrc = '''[00:00.000] 纯音乐，敬请聆听。'''
+                    self.lrc = None
 
             self.retry = 0
 

@@ -152,7 +152,7 @@ class NeteaseDownloader:
                 return []
             # 服务器错误
             if js['code'] != 200:
-                messagebox.showerror('错误', '远端服务器拒绝连接...情稍后再试...')
+                messagebox.showerror('错误', '远端服务器拒绝连接...请稍后再试...')
                 return []
             summaries = []
             # print(js)
@@ -283,7 +283,8 @@ class NeteaseDownloader:
                 if self.lrc is not None:
                     self.lrc = str(self.lrc_base)
                 else:
-                    self.lrc = '''[00:00.000] 纯音乐，敬请聆听。'''
+                    # self.lrc = '''[00:00.000] 纯音乐，敬请聆听。'''
+                    self.lrc = None
 
             self.retry = 0
 
@@ -361,7 +362,7 @@ class NeteaseDownloader:
         # 禁止最大化
         self.root.resizable(width=False, height=False)
 
-        # TODO: 加上显示字体修改。主要是搜索结果显示。
+        # TO-DO: 加上显示字体修改。主要是搜索结果显示。
         # self.font =
 
         self.frame_left = Frame(self.root)
@@ -780,7 +781,7 @@ class NeteaseDownloader:
 
             self.var_download.set(res)
 
-            while len(threading.enumerate()) < self.max_threads:
+            while len(threading.enumerate()) + 1 < self.max_threads:
                 if len(self.download_queue) == 0:
                     break
                 self.lock.acquire()
@@ -828,6 +829,9 @@ class NeteaseDownloader:
         if summary is None:
             return
         if self.var_download_lrc.get() is False:
+            return
+        # 没有歌词匹配
+        if summary.lrc is None:
             return
         filename = summary.filename()
         filename = filename.split('.mp3')[0] + '.lrc'
