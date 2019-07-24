@@ -35,7 +35,7 @@ def safe_filename(filename: str):
     return filename
 
 
-# NeteaseDownwloader的主类
+# NeteaseDownloader的主类
 # 主要负责UI、网络
 class NeteaseDownloader:
     class Settings:
@@ -56,6 +56,9 @@ class NeteaseDownloader:
                 self.max_threads = js['max_threads']
                 self.max_retry = js['max_retry']
                 self.refresh_time = js['refresh_time']
+                if not os.path.exists(self.download_folder):
+                    self.download_folder = 'Download'
+                    self.save()
 
         def save(self):
             with open(self.save_filename, 'w') as f:
@@ -79,7 +82,7 @@ class NeteaseDownloader:
 
     class Network:
         def __init__(self):
-            self.url_main = 'https://international.v1.hitokoto.cn/nm/'
+            self.url_main = 'https://v1.hitokoto.cn/nm/'
             # 需要3个参数:key, offset, limit
             self.url_search_songs = self.url_main + 'search/%s?type=SONG&offset=%s&limit=%s'
             # 需要3个参数:key, offset, limit
@@ -141,7 +144,7 @@ class NeteaseDownloader:
             for i in ids:
                 res = res + str(i) + ','
             res = res[:-1]
-            print(self.url_summary % (res, ))
+            # print(self.url_summary % (res, ))
             try:
                 js = self.get_json(self.url_summary % (res,))
             except ConnectionError:
