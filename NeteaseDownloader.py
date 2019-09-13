@@ -140,25 +140,28 @@ class NeteaseDownloader:
         def get_summary(self, ids: list, reverse=False, blend_lrc=True, trans_only=False):
             if len(ids) == 0:
                 return []
-            res = ''
-            for i in ids:
-                res = res + str(i) + ','
-            res = res[:-1]
-            # print(self.url_summary % (res, ))
-            try:
-                js = self.get_json(self.url_summary % (res,))
-            except ConnectionError:
-                messagebox.showerror('错误', '连接错误! 检查网络...')
-                return []
-            # 服务器错误
-            if js['code'] != 200:
-                messagebox.showerror('错误', '远端服务器拒绝连接...请稍后再试...')
-                return []
+            # 注意：hitokoto的API只支持20个summery。这里需要分段。
             summaries = []
-            # print(js)
-            for summary in js['songs']:
-                summaries.append(NeteaseDownloader.SongSummary(summary, reverse=reverse,
-                                                               blend_lrc=blend_lrc, trans_only=trans_only))
+            for slip in range(0, len(ids), 20):
+                slip_ids = ids[slip:slip+20]
+                res = ''
+                for i in slip_ids:
+                    res = res + str(i) + ','
+                res = res[:-1]
+                # print(self.url_summary % (res, ))
+                try:
+                    js = self.get_json(self.url_summary % (res,))
+                except ConnectionError:
+                    messagebox.showerror('错误', '连接错误! 检查网络...')
+                    return []
+                # 服务器错误
+                if js['code'] != 200:
+                    messagebox.showerror('错误', '远端服务器拒绝连接...请稍后再试...')
+                    return []
+                # print(js)
+                for summary in js['songs']:
+                    summaries.append(NeteaseDownloader.SongSummary(summary, reverse=reverse,
+                                                                   blend_lrc=blend_lrc, trans_only=trans_only))
             # print(summaries)
             return summaries
 
